@@ -1,11 +1,6 @@
 
-
-
-
-
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { Medication, UserProfile, DoseLog, BloodSugarLog, SymptomLog, BloodPressureLog, LabResult, MenopauseLog, Appointment } from './types';
 import Header from './components/Header';
 import MedicationList from './components/MedicationList';
@@ -113,7 +108,6 @@ const App: React.FC = () => {
     const saved = localStorage.getItem('labResults');
     if (!saved) return [];
     const parsed = JSON.parse(saved);
-    // Migration: Convert single imageUrl to images array if needed
     return parsed.map((r: any) => ({
         ...r,
         images: r.images || (r.imageUrl ? [`data:image/jpeg;base64,${r.imageUrl}`] : [])
@@ -228,8 +222,8 @@ const App: React.FC = () => {
             if ('Notification' in window && Notification.permission === 'granted') {
                 new Notification(`حان وقت دواء: ${dueMedication.name}`, {
                     body: `الجرعة: ${dueMedication.dosage}. اضغط هنا لتسجيل الجرعة.`,
-                    icon: 'https://cdn-icons-png.flaticon.com/512/822/822163.png', // Generic pill icon
-                    tag: dueMedication.id // Prevent duplicate notifications
+                    icon: 'https://cdn-icons-png.flaticon.com/512/822/822163.png',
+                    tag: dueMedication.id
                 });
             }
         }
@@ -308,14 +302,12 @@ const App: React.FC = () => {
       const updatedMedication = {
           ...medication,
           nextDose: nextDoseTime,
-          // Do NOT decrement remaining doses
       };
       setMedications(medications.map(m => m.id === medication.id ? updatedMedication : m));
       setActiveReminderMedication(null);
   };
 
   const handleSnoozeDose = (medication: Medication) => {
-      // Add 15 minutes to the current nextDose (or make it now + 15m)
       const now = Date.now();
       const snoozedTime = now + (15 * 60 * 1000); // 15 minutes
       
@@ -429,7 +421,6 @@ const App: React.FC = () => {
           setTempLabResultImages(prev => [...prev, ...newImages]);
           if (!isLabResultModalOpen) setIsLabResultModalOpen(true);
       }
-      // Reset input
       if (event.target) event.target.value = '';
   };
 
@@ -441,14 +432,12 @@ const App: React.FC = () => {
 
   const handleSaveLabResult = (data: { title: string; notes: string }) => {
       if (labResultToEdit) {
-          // Update existing
           setLabResults(labResults.map(r => 
               r.id === labResultToEdit.id 
               ? { ...r, title: data.title, notes: data.notes, images: tempLabResultImages } 
               : r
           ));
       } else if (tempLabResultImages.length > 0) {
-          // Create new
           const newResult: LabResult = {
               id: Date.now().toString(),
               timestamp: Date.now(),
@@ -470,7 +459,6 @@ const App: React.FC = () => {
       }
   };
   
-  // --- Menopause Handlers ---
   const handleUpdateMenopauseLog = (count: number) => {
       const today = new Date().toISOString().split('T')[0];
       const existingEntryIndex = menopauseLog.findIndex(l => l.date === today);
@@ -484,7 +472,6 @@ const App: React.FC = () => {
       }
   };
 
-  // --- Appointments Handlers ---
   const handleSaveAppointment = (appointment: Appointment) => {
       if (appointmentToEdit) {
           setAppointments(appointments.map(a => a.id === appointment.id ? appointment : a));
@@ -507,7 +494,7 @@ const App: React.FC = () => {
   };
 
 
-  // --- Image Processing using Gemini ---
+  // --- AI Image Analysis ---
   const handleAddWithPhoto = () => {
     setIsAddOptionModalOpen(false);
     if (fileInputRef.current) {
@@ -524,20 +511,29 @@ const App: React.FC = () => {
         
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-3-flash-preview',
             contents: {
                 parts: [
                     { inlineData: { mimeType: file.type || 'image/jpeg', data: base64Data } },
-                    { text: 'Analyze this medication image. Extract the medication Brand Name (or Scientific Name if Brand is not clear), the Dosage strength (e.g., 500mg, 10 mg/ml), and recommended Frequency in hours if visible (otherwise default to 8). Output strictly JSON with keys: name, dosage, frequency (number).' }
+                    { text: 'Analyze this medication image. Extract the medication Brand Name (or Scientific Name if Brand is not clear), the Dosage strength (e.g., 500mg, 10 mg/ml), and recommended Frequency in hours if visible (otherwise default to 8).' }
                 ]
             },
             config: {
-                responseMimeType: 'application/json'
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: { type: Type.STRING },
+                    dosage: { type: Type.STRING },
+                    frequency: { type: Type.NUMBER }
+                  },
+                  required: ['name', 'dosage', 'frequency']
+                }
             }
         });
 
         if (response.text) {
-             const data = JSON.parse(response.text);
+             const data = JSON.parse(response.text.trim());
              setMedicationToEdit({
                 name: data.name || 'دواء غير معروف',
                 dosage: data.dosage || '',
@@ -547,10 +543,9 @@ const App: React.FC = () => {
         }
       } catch (error) {
          console.error("AI processing error:", error);
-         alert("تعذر استخراج البيانات من الصورة. يرجى المحاولة مرة أخرى أو الإدخال يدوياً.");
+         alert("تعذر استخراج البيانات من الصورة. يرجى المحاولة مرة أخرى أو التأكد من توفر صلاحيات الكاميرا واتصال الإنترنت.");
       } finally {
         setIsProcessingImage(false);
-        // Reset file input to allow selecting the same file again
         if (event.target) event.target.value = '';
       }
     }
@@ -579,7 +574,6 @@ const App: React.FC = () => {
   const handleEmergency = () => {
       if (userProfile.guardianEnabled && userProfile.guardianName) {
           setIsEmergencyActive(true);
-          // Simulate sending alert
           setTimeout(() => {
               alert(`تم إرسال تنبيه طوارئ إلى المراقب: ${userProfile.guardianName}`);
               setIsEmergencyActive(false);
@@ -607,7 +601,6 @@ const App: React.FC = () => {
       <main className="container mx-auto px-4 py-6 max-w-lg">
         {activeView === 'home' && (
            <div className="animate-fade-in space-y-6">
-              {/* Health Tips Banners */}
               <HealthTipBanner userProfile={userProfile} />
               
               {userProfile.gender === 'أنثى' && userProfile.isPregnant && (
@@ -647,7 +640,6 @@ const App: React.FC = () => {
 
         {activeView === 'medications' && (
           <div className="animate-fade-in pb-20">
-            {/* Inline Search removed as per request */}
             <MedicationList 
               medications={medications} 
               onEdit={handleEditMedication} 
@@ -839,7 +831,6 @@ const App: React.FC = () => {
           labResultToEdit={labResultToEdit}
       />
       
-      {/* Active Medication Reminder Overlay */}
       {activeReminderMedication && (
           <DoseReminderOverlay 
               medication={activeReminderMedication}
@@ -849,7 +840,6 @@ const App: React.FC = () => {
           />
       )}
 
-      {/* Hidden inputs for file uploads */}
       <input 
         type="file" 
         ref={fileInputRef} 
